@@ -1,5 +1,9 @@
 # Makefile for local verification of formal specifications
 
+TLA2TOOLS_VERSION := v1.8.0
+TLA2TOOLS_URL := https://github.com/tlaplus/tlaplus/releases/download/$(TLA2TOOLS_VERSION)/tla2tools.jar
+TLA2TOOLS_JAR := tlaplus/tla2tools.jar
+
 FIZZBEE_VERSION := v0.4.0
 FIZZ_DIR := $(HOME)/.local/fizzbee
 
@@ -27,7 +31,7 @@ FIZZBEE_TARBALL := fizzbee-$(FIZZBEE_VERSION)-$(FIZZBEE_OS)_$(FIZZBEE_ARCH).tar.
 FIZZBEE_URL := https://github.com/fizzbee-io/fizzbee/releases/download/$(FIZZBEE_VERSION)/$(FIZZBEE_TARBALL)
 FIZZ_BIN := $(FIZZ_DIR)/fizz
 
-.PHONY: fizzbee-install fizzbee tlaplus verify check clean
+.PHONY: fizzbee-install tlaplus-install fizzbee tlaplus verify check clean
 
 ## fizzbee-install: Download and install Fizzbee CLI locally
 fizzbee-install:
@@ -58,8 +62,18 @@ $(FIZZ_BIN):
 	@echo "Fizzbee not found at $(FIZZ_BIN). Run 'make fizzbee-install' first."
 	@exit 1
 
-## tlaplus: Run TLC model checker on all TLA+ specs (requires java + tla2tools.jar)
-tlaplus:
+## tlaplus-install: Download TLA+ tools jar
+tlaplus-install:
+	@echo "Downloading tla2tools.jar $(TLA2TOOLS_VERSION)..."
+	@curl -fsSL -o $(TLA2TOOLS_JAR) "$(TLA2TOOLS_URL)"
+	@echo "tla2tools.jar installed to $(TLA2TOOLS_JAR)"
+
+$(TLA2TOOLS_JAR):
+	@echo "tla2tools.jar not found at $(TLA2TOOLS_JAR). Run 'make tlaplus-install' first."
+	@exit 1
+
+## tlaplus: Run TLC model checker on all TLA+ specs
+tlaplus: $(TLA2TOOLS_JAR)
 	@echo "=== TLA+: LeaderlessLog ==="
 	cd tlaplus && java -jar tla2tools.jar -config LeaderlessLog.cfg LeaderlessLog.tla
 	@echo ""

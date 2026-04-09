@@ -1,5 +1,8 @@
 .claude/worktrees/
 
+# TLA+ tools (downloaded via `make tlaplus-install`)
+tlaplus/tla2tools.jar
+
 # Fizzbee model checker output
 fizzbee/out/
 fizzbee/*.json
