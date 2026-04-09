@@ -55,9 +55,6 @@ jobs:
             file an issue in lakestream-io/leaderless-log-protocol with labels "cross-model-inconsistency"
             and "formal-verification".
 
-          claude_env: |
-            SNBOT_GITHUB_TOKEN=${{ secrets.SNBOT_GITHUB_TOKEN }}
-
   models-vs-spec-review:
     runs-on: ubuntu-latest
     name: Models vs Spec Agent
@@ -97,8 +94,4 @@ jobs:
             If a spec section has no corresponding model construct in either TLA+ or Fizzbee,
             file an issue in lakestream-io/leaderless-log-protocol with labels "spec-coverage-gap" and
             "formal-verification".
-
-
-          claude_env: |
-            SNBOT_GITHUB_TOKEN=${{ secrets.SNBOT_GITHUB_TOKEN }}
 

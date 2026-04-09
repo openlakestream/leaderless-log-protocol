@@ -49,9 +49,6 @@ jobs:
             If you find critical issues, file a GitHub issue in lakestream-io/leaderless-log-protocol
             with labels "bug" and "formal-verification".
 
-          claude_env: |
-            SNBOT_GITHUB_TOKEN=${{ secrets.SNBOT_GITHUB_TOKEN }}
-
   fizzbee-spec-alignment-review:
     runs-on: ubuntu-latest
     name: Fizzbee Spec Alignment Agent
@@ -91,6 +88,3 @@ jobs:
             what is missing and referencing the specific spec section.
             File issues in lakestream-io/leaderless-log-protocol for any spec drift with labels "spec-drift"
             and "formal-verification".
-
-          claude_env: |
-            SNBOT_GITHUB_TOKEN=${{ secrets.SNBOT_GITHUB_TOKEN }}

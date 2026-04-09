@@ -51,9 +51,6 @@ jobs:
             If you find critical issues (wrong UNCHANGED list, incorrect temporal formula),
             file a GitHub issue in lakestream-io/leaderless-log-protocol with labels "bug" and "formal-verification".
 
-          claude_env: |
-            SNBOT_GITHUB_TOKEN=${{ secrets.SNBOT_GITHUB_TOKEN }}
-
   tlaplus-spec-alignment-review:
     runs-on: ubuntu-latest
     name: TLA+ Spec Alignment Agent
@@ -94,6 +91,3 @@ jobs:
             what is missing and referencing the specific spec section.
             File issues in lakestream-io/leaderless-log-protocol for any spec drift with labels "spec-drift"
             and "formal-verification".
-
-          claude_env: |
-            SNBOT_GITHUB_TOKEN=${{ secrets.SNBOT_GITHUB_TOKEN }}
