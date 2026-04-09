@@ -383,9 +383,16 @@ Next ==
 Fairness ==
     /\ \A w \in Writers : WF_vars(StartAppend(w))
     /\ \A w \in Writers : WF_vars(WALWriteSuccess(w))
-    /\ \A w \in Writers : WF_vars(AssignOffset(w))
-    /\ \A w \in Writers : WF_vars(AssignOffsetFenced(w))
-    /\ \A w \in Writers : WF_vars(AssignOffsetExhausted(w))
+    \* AssignOffset and its failure variants use strong fairness (SF):
+    \* FenceLog/UnfenceLog have no fairness and can oscillate, toggling
+    \* enablement of AssignOffset vs AssignOffsetFenced each step. WF
+    \* requires continuous enablement and cannot guarantee progress under
+    \* this oscillation. SF requires only infinitely-often enablement.
+    \* This matches the real system where the coordination store call is
+    \* atomic — the writer completes during any finite OPEN/FENCED window.
+    /\ \A w \in Writers : SF_vars(AssignOffset(w))
+    /\ \A w \in Writers : SF_vars(AssignOffsetFenced(w))
+    /\ \A w \in Writers : SF_vars(AssignOffsetExhausted(w))
     /\ \A w \in Writers : WF_vars(AppendComplete(w))
     /\ WF_vars(CompactStart)
     /\ WF_vars(CompactWriteCompactedIndex)
@@ -419,11 +426,14 @@ MonotonicOffsets ==
     sequenceCounter >= 1
 
 \* S3: Fenced log rejects appends
-\* No writer can be in ASSIGNING_OFFSET when log is FENCED
+\* If logState = FENCED, then AssignOffset(w) is not enabled for any writer.
+\* Uses ENABLED to match the canonical spec (action enablement, not state).
+\* A writer may be in ASSIGNING_OFFSET when fenced (it entered before the
+\* fence), but AssignOffset cannot fire — it will take the AssignOffsetFenced
+\* path instead.
 FencedRejectsAppends ==
-    \A w \in Writers :
-        writerState[w] = "ASSIGNING_OFFSET" =>
-            logState # "FENCED"
+    logState = "FENCED" =>
+        \A w \in Writers : ~ENABLED AssignOffset(w)
 
 \* S4: After compaction writes COMPACTED index, the entry exists
 \* Uses CurRangeEnd to track the active compaction round.

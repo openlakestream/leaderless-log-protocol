@@ -221,12 +221,9 @@ always assertion MonotonicOffsets:
 # S3: FencedRejectsAppends
 # The AssignOffset action is not enabled when logState == "FENCED".
 # This is guaranteed by AssignOffset's guard (logState == "OPEN").
-# NOTE: As a state invariant, this property is misformulated because
-# FenceLog can fire while a writer is in ASSIGNING_OFFSET, creating a
-# transient state where both conditions hold. The writer then fails in
-# AssignOffset. This matches the TLA+ model which has the same issue.
-# The correct property is about action enablement, not state.
-# Omitted here; correctness is enforced by the action guards.
+# The TLA+ model uses ENABLED to verify this as an invariant.
+# Fizzbee lacks an ENABLED operator, so this property is not checked
+# here; correctness is enforced by the action guards in AssignOffset.
 
 # S4: After compaction writes COMPACTED, the entry exists (current round)
 always assertion CompactionPreservesData:
