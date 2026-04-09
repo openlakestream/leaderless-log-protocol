@@ -1,0 +1,22 @@
+{
+  "name": "fizzbee",
+  "version": "1.0.0",
+  "description": "Fizzbee formal verification for distributed systems. Guides creating, editing, and reviewing Starlark-based specifications with implicit fault injection, model-based testing, and performance modeling for consensus protocols and distributed algorithms.",
+  "author": {
+    "name": "StreamNative",
+    "url": "https://streamnative.io"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "fizzbee",
+    "model-checking",
+    "formal-verification",
+    "distributed-systems",
+    "starlark",
+    "fault-injection",
+    "model-based-testing",
+    "consensus",
+    "raft",
+    "paxos"
+  ]
+}

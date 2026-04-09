@@ -1,0 +1,24 @@
+{
+  "name": "tlaplus",
+  "version": "1.0.0",
+  "description": "TLA+ and PlusCal model checking for distributed systems. Guides creating, editing, and reviewing formal specifications for consensus protocols (Raft, Paxos, Zab), replication, transactions, and other distributed algorithms. First-principles approach: start from what failures you want to prevent, work backwards to the model.",
+  "author": {
+    "name": "StreamNative",
+    "url": "https://streamnative.io"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "tlaplus",
+    "tla+",
+    "pluscal",
+    "model-checking",
+    "formal-verification",
+    "distributed-systems",
+    "consensus",
+    "raft",
+    "paxos",
+    "safety",
+    "liveness",
+    "temporal-logic"
+  ]
+}

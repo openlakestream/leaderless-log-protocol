@@ -1,0 +1,6 @@
+.claude/worktrees/
+
+# Fizzbee model checker output
+fizzbee/out/
+fizzbee/*.json
+.gstack/
