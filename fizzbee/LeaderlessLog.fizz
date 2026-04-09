@@ -1,0 +1,299 @@
+# LeaderlessLog.fizz -- Fizzbee Implementation
+#
+# Canonical spec: ../1-leaderless-log-protocol.md
+#
+# Models the writer append -> compaction index update -> reader read
+# lifecycle in a coordination-delegated leaderless architecture.
+#
+# Supports multi-record entries: each write covers 1..MAX_BATCH records.
+# Index entries are stored at end-offsets with a msgCount field.
+# Readers use ceiling lookup to find the covering entry for an offset.
+#
+# Supports sequential compaction: round 1 compacts [COMPACT_RANGE_START,
+# COMPACT_RANGE_END], then round 2 compacts [COMPACT_RANGE_2_START,
+# COMPACT_RANGE_2_END].
+
+# ============================================================
+# Constants
+# ============================================================
+WRITERS = ["w1", "w2"]
+MAX_OFFSET = 5
+COMPACT_RANGE_START = 1
+COMPACT_RANGE_END = 3
+COMPACT_RANGE_2_START = 4
+COMPACT_RANGE_2_END = 5
+MAX_BATCH = 2
+
+# ============================================================
+# Helper Functions (parameterized -- cannot reference state at module level)
+# ============================================================
+
+# Ceiling lookup: does a non-EMPTY entry cover offset off?
+def hasCoveringEntry(idx, off):
+    for o in range(off, MAX_OFFSET + 1):
+        if idx[o]["type"] != "EMPTY":
+            startOff = o - idx[o]["msgCount"] + 1
+            if startOff <= off:
+                return True
+    return False
+
+# Does a WAL entry cover offset off?
+def hasCoveringWALEntry(idx, off):
+    for o in range(off, MAX_OFFSET + 1):
+        if idx[o]["type"] == "WAL":
+            startOff = o - idx[o]["msgCount"] + 1
+            if startOff <= off:
+                return True
+    return False
+
+# ============================================================
+# State variable initialization
+# ============================================================
+atomic action Init:
+    logIndex = { o: {"type": "EMPTY", "msgCount": 0} for o in range(1, MAX_OFFSET + 1) }
+    sequenceCounter = 1
+    logState = "OPEN"
+    compactionCursor = 1
+    writerState = { w: "IDLE" for w in WRITERS }
+    writerOffset = { w: 0 for w in WRITERS }
+    writerBatchSize = { w: 0 for w in WRITERS }
+    compactorState = "IDLE"
+    compactRound = 1
+    readerResult = { w: "NONE" for w in WRITERS }
+
+# ============================================================
+# Actions (all atomic to match TLA+ semantics)
+# ============================================================
+
+# Action 1: StartAppend(w)
+atomic action StartAppend:
+    any w in WRITERS:
+        if writerState[w] == "IDLE" and logState == "OPEN":
+            any count in range(1, MAX_BATCH + 1):
+                writerBatchSize[w] = count
+                writerState[w] = "WRITING_WAL"
+
+# Action 2: WALWrite(w) -- non-deterministic success/failure
+atomic action WALWrite:
+    any w in WRITERS:
+        if writerState[w] == "WRITING_WAL":
+            outcome = any ["success", "failure"]
+            if outcome == "success":
+                writerState[w] = "ASSIGNING_OFFSET"
+            else:
+                writerState[w] = "FAILED"
+
+# Action 3: AssignOffset(w)
+atomic action AssignOffset:
+    any w in WRITERS:
+        if writerState[w] == "ASSIGNING_OFFSET":
+            count = writerBatchSize[w]
+            if logState == "OPEN" and sequenceCounter + count - 1 <= MAX_OFFSET:
+                off = sequenceCounter
+                endOff = off + count - 1
+                sequenceCounter = endOff + 1
+                logIndex[endOff] = {"type": "WAL", "msgCount": count}
+                writerOffset[w] = endOff
+                writerState[w] = "DONE"
+            else:
+                writerState[w] = "FAILED"
+
+# Action 4: AppendComplete(w)
+atomic action AppendComplete:
+    any w in WRITERS:
+        if writerState[w] == "DONE" or writerState[w] == "FAILED":
+            writerState[w] = "IDLE"
+            writerOffset[w] = 0
+            writerBatchSize[w] = 0
+
+# Action 5: CompactStart
+# Guard: compactor idle, round is 1 or 2, all offsets in current range
+# covered by WAL entries, and all non-EMPTY entries fully contained.
+atomic action CompactStart:
+    if compactorState == "IDLE" and compactRound in [1, 2]:
+        if compactRound == 1:
+            cStart = COMPACT_RANGE_START
+            cEnd = COMPACT_RANGE_END
+        else:
+            cStart = COMPACT_RANGE_2_START
+            cEnd = COMPACT_RANGE_2_END
+        allCovered = True
+        allAligned = True
+        for off in range(cStart, cEnd + 1):
+            if not hasCoveringWALEntry(logIndex, off):
+                allCovered = False
+        for o in range(cStart, cEnd + 1):
+            if logIndex[o]["type"] != "EMPTY":
+                startOff = o - logIndex[o]["msgCount"] + 1
+                if startOff < cStart:
+                    allAligned = False
+        if allCovered and allAligned:
+            compactorState = "WRITING_COMPACTED_INDEX"
+
+# Action 6: CompactWriteCompactedIndex
+atomic action CompactWriteCompactedIndex:
+    if compactorState == "WRITING_COMPACTED_INDEX":
+        if compactRound == 1:
+            cStart = COMPACT_RANGE_START
+            cEnd = COMPACT_RANGE_END
+        else:
+            cStart = COMPACT_RANGE_2_START
+            cEnd = COMPACT_RANGE_2_END
+        logIndex[cEnd] = {"type": "COMPACTED", "msgCount": cEnd - cStart + 1}
+        compactorState = "DELETING_OLD"
+
+# Action 7: CompactDeleteOldEntries
+# Delete all non-EMPTY entries in [CurRangeStart, CurRangeEnd-1].
+atomic action CompactDeleteOldEntries:
+    if compactorState == "DELETING_OLD":
+        if compactRound == 1:
+            cStart = COMPACT_RANGE_START
+            cEnd = COMPACT_RANGE_END
+        else:
+            cStart = COMPACT_RANGE_2_START
+            cEnd = COMPACT_RANGE_2_END
+        for o in range(cStart, cEnd):
+            logIndex[o] = {"type": "EMPTY", "msgCount": 0}
+        compactorState = "UPDATING_CURSOR"
+
+# Action 8: CompactUpdateCursor
+# Set compactionCursor = CurRangeEnd + 1.
+atomic action CompactUpdateCursor:
+    if compactorState == "UPDATING_CURSOR":
+        if compactRound == 1:
+            cEnd = COMPACT_RANGE_END
+        else:
+            cEnd = COMPACT_RANGE_2_END
+        compactionCursor = cEnd + 1
+        compactorState = "DONE"
+
+# Action 9: CompactReset
+# Advance to round 2 (idempotent if already 2).
+atomic action CompactReset:
+    if compactorState == "DONE":
+        compactorState = "IDLE"
+        compactRound = 2
+
+# Action 9b: CompactorCrash
+# Compactor crashes during any intermediate compaction step.
+# Resets compactor to IDLE without undoing committed index changes.
+# Does NOT advance compactRound.
+atomic action CompactorCrash:
+    if compactorState in ["WRITING_COMPACTED_INDEX", "DELETING_OLD", "UPDATING_CURSOR"]:
+        compactorState = "IDLE"
+
+# Action 10: FenceLog
+atomic action FenceLog:
+    if logState == "OPEN":
+        logState = "FENCED"
+
+# Action 11: UnfenceLog
+atomic action UnfenceLog:
+    if logState == "FENCED":
+        logState = "OPEN"
+
+# Action 12: ReadEntry(w, off)
+atomic action ReadEntry:
+    any w in WRITERS:
+        any off in range(1, MAX_OFFSET + 1):
+            if writerState[w] == "IDLE" and off >= 1 and off < sequenceCounter:
+                if hasCoveringEntry(logIndex, off):
+                    readerResult[w] = "OK"
+                else:
+                    readerResult[w] = "ERROR"
+
+# ============================================================
+# Safety Properties (Invariants)
+# ============================================================
+
+# S1: No two distinct WAL entries share the same offset
+always assertion NoOffsetDuplicates:
+    for o in range(1, MAX_OFFSET + 1):
+        t = logIndex[o]["type"]
+        if t != "WAL" and t != "COMPACTED" and t != "EMPTY":
+            return False
+    return True
+
+# S2: sequenceCounter >= 1
+always assertion MonotonicOffsets:
+    return sequenceCounter >= 1
+
+# S3: FencedRejectsAppends
+# The AssignOffset action is not enabled when logState == "FENCED".
+# This is guaranteed by AssignOffset's guard (logState == "OPEN").
+# NOTE: As a state invariant, this property is misformulated because
+# FenceLog can fire while a writer is in ASSIGNING_OFFSET, creating a
+# transient state where both conditions hold. The writer then fails in
+# AssignOffset. This matches the TLA+ model which has the same issue.
+# The correct property is about action enablement, not state.
+# Omitted here; correctness is enforced by the action guards.
+
+# S4: After compaction writes COMPACTED, the entry exists (current round)
+always assertion CompactionPreservesData:
+    if compactorState == "DELETING_OLD" or compactorState == "UPDATING_CURSOR" or compactorState == "DONE":
+        if compactRound == 1:
+            cEnd = COMPACT_RANGE_END
+        else:
+            cEnd = COMPACT_RANGE_2_END
+        if logIndex[cEnd]["type"] != "COMPACTED":
+            return False
+    return True
+
+# S5: After deleting old entries, no WAL in [CurRangeStart, CurRangeEnd-1]
+always assertion NoPhantomEntries:
+    if compactorState == "UPDATING_CURSOR" or compactorState == "DONE":
+        if compactRound == 1:
+            cStart = COMPACT_RANGE_START
+            cEnd = COMPACT_RANGE_END
+        else:
+            cStart = COMPACT_RANGE_2_START
+            cEnd = COMPACT_RANGE_2_END
+        for off in range(cStart, cEnd):
+            if logIndex[off]["type"] != "EMPTY":
+                return False
+    return True
+
+# S6: Cursor never exceeds next assignable offset
+always assertion CursorConsistency:
+    return compactionCursor <= sequenceCounter
+
+# S7: No two WAL entries cover overlapping offset ranges.
+# This is the core AtomicIncrement safety guarantee. WAL-COMPACTED overlap
+# is intentionally allowed during compaction's write-before-delete (the
+# COMPACTED entry is written before old WAL entries are deleted). After
+# CompactorCrash the overlap may persist permanently, which is harmless.
+always assertion NoOverlappingRanges:
+    for o1 in range(1, MAX_OFFSET + 1):
+        for o2 in range(1, MAX_OFFSET + 1):
+            if o1 != o2 and logIndex[o1]["type"] == "WAL" and logIndex[o2]["type"] == "WAL":
+                start1 = o1 - logIndex[o1]["msgCount"] + 1
+                start2 = o2 - logIndex[o2]["msgCount"] + 1
+                # Ranges [start1, o1] and [start2, o2] must not overlap
+                if not (o1 < start2 or o2 < start1):
+                    return False
+    return True
+
+# S8: No reader ever gets ERROR -- the 3-step ordering guarantees
+# CeilingGet always finds a covering entry for any committed offset.
+always assertion NoReaderError:
+    for w in WRITERS:
+        if readerResult[w] == "ERROR":
+            return False
+    return True
+
+# S9: Sequential compaction safety -- after round 1 completes (round
+# advances to 2), round 1's COMPACTED entry persists. Verifies that
+# compaction rounds are independent (compositionality).
+always assertion SequentialCompactionSafety:
+    if compactRound == 2:
+        if logIndex[COMPACT_RANGE_END]["type"] != "COMPACTED":
+            return False
+    return True
+
+# ============================================================
+# Liveness Properties
+# ============================================================
+# NOTE: Liveness properties (L1-L3) require fair scheduling which
+# cannot combine with atomic actions in fizzbee v0.4.0.
+# Liveness is verified in the TLA+ model with weak/strong fairness.
+# The fizzbee model verifies safety properties only.

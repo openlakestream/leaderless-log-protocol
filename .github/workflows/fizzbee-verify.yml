@@ -1,0 +1,108 @@
+name: Fizzbee Model Verification
+
+on:
+  push:
+    paths:
+      - 'fizzbee/**'
+  pull_request:
+    paths:
+      - 'fizzbee/**'
+  schedule:
+    - cron: '0 7 * * *'  # Daily at 07:00 UTC
+  workflow_dispatch:
+
+jobs:
+  fizzbee-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Protocol 1: LeaderlessLog (all safety properties expected PASS)
+          - model: LeaderlessLog
+            file: LeaderlessLog.fizz
+            ci_patches: |
+              sed -i 's/MAX_OFFSET = 5/MAX_OFFSET = 3/' LeaderlessLog.fizz
+              sed -i 's/COMPACT_RANGE_END = 3/COMPACT_RANGE_END = 2/' LeaderlessLog.fizz
+              sed -i 's/COMPACT_RANGE_2_START = 4/COMPACT_RANGE_2_START = 3/' LeaderlessLog.fizz
+              sed -i 's/COMPACT_RANGE_2_END = 5/COMPACT_RANGE_2_END = 3/' LeaderlessLog.fizz
+
+          # Protocol 2: TaskClaiming (all safety properties expected PASS)
+          - model: TaskClaiming
+            file: TaskClaiming.fizz
+            ci_patches: |
+              sed -i 's/TASKS = \["t1", "t2"\]/TASKS = ["t1"]/' TaskClaiming.fizz
+
+    name: Fizzbee — ${{ matrix.model }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Fizzbee
+        id: install-fizzbee
+        run: |
+          set -euo pipefail
+          FIZZBEE_VERSION="v0.4.0"
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            x86_64) ARCH_NAME="x86" ;;
+            aarch64|arm64) ARCH_NAME="arm" ;;
+            *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+          esac
+          TARBALL="fizzbee-${FIZZBEE_VERSION}-linux_${ARCH_NAME}.tar.gz"
+          curl -fsSL -o /tmp/fizzbee.tar.gz \
+            "https://github.com/fizzbee-io/fizzbee/releases/download/${FIZZBEE_VERSION}/${TARBALL}"
+          mkdir -p /tmp/fizzbee-install
+          tar xzf /tmp/fizzbee.tar.gz -C /tmp/fizzbee-install
+          FIZZ_BIN=$(find /tmp/fizzbee-install -name fizz -type f | head -1)
+          FIZZ_DIR=$(dirname "$FIZZ_BIN")
+          echo "FIZZ_DIR=${FIZZ_DIR}" >> "$GITHUB_ENV"
+          chmod +x "$FIZZ_BIN"
+          echo "Fizzbee ${FIZZBEE_VERSION} installed at ${FIZZ_DIR}"
+
+      - name: Reduce state space for CI
+        run: |
+          cd fizzbee
+          ${{ matrix.ci_patches }}
+          sed -i 's/max_actions: 50/max_actions: 30/' fizz.yaml
+          echo "--- Patched constants ---"
+          head -20 ${{ matrix.file }}
+
+      - name: Run Fizzbee model checker
+        id: fizzbee
+        env:
+          FIZZ_FILE: ${{ matrix.file }}
+        run: |
+          set -euo pipefail
+          cd fizzbee
+          echo "Running: ${FIZZ_DIR}/fizz ${FIZZ_FILE}"
+          "${FIZZ_DIR}/fizz" "$FIZZ_FILE" 2>&1 | tee ../fizzbee-output.txt
+          # fizz exits 0 even on property failures, so check output
+          if grep -q "PASSED: Model checker completed successfully" ../fizzbee-output.txt; then
+            echo "result=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate all properties pass
+        env:
+          FIZZBEE_RESULT: ${{ steps.fizzbee.outputs.result }}
+          FIZZBEE_MODEL: ${{ matrix.model }}
+        run: |
+          set -euo pipefail
+          if [ "$FIZZBEE_RESULT" != "passed" ]; then
+            echo "ERROR: Fizzbee check failed for $FIZZBEE_MODEL"
+            echo "--- Output ---"
+            cat fizzbee-output.txt
+            exit 1
+          fi
+          echo "All properties passed for $FIZZBEE_MODEL"
+
+      - name: Upload Fizzbee output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fizzbee-output-${{ matrix.model }}
+          path: fizzbee-output.txt
+          retention-days: 30

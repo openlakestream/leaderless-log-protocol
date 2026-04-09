@@ -1,0 +1,183 @@
+# TaskClaiming.fizz -- Fizzbee Implementation
+#
+# Canonical spec: ../2-coordination-delegated-task-claiming.md
+#
+# Models multiple workers independently claiming, executing,
+# and releasing tasks using coordination-store-backed ephemeral locks.
+
+# ============================================================
+# Constants
+# ============================================================
+WORKERS = ["w1", "w2"]
+TASKS = ["t1", "t2"]
+MAX_FAILURES = 2
+
+# ============================================================
+# State variable initialization
+# ============================================================
+atomic action Init:
+    taskStatus = { t: "INIT" for t in TASKS }
+    lockState = { t: {"worker": "NONE", "version": 0} for t in TASKS }
+    workerAlive = { w: True for w in WORKERS }
+    workerState = { w: "IDLE" for w in WORKERS }
+    workerTask = { w: "NONE" for w in WORKERS }
+    taskFailCount = { t: 0 for t in TASKS }
+    lockVersion = 1
+
+# ============================================================
+# Actions (all atomic to match TLA+ semantics)
+# ============================================================
+
+# Action 1: ScanTasks(w, t)
+atomic action ScanTasks:
+    any w in WORKERS:
+        any t in TASKS:
+            if workerAlive[w] and workerState[w] == "IDLE" and taskStatus[t] == "INIT":
+                workerState[w] = "SCANNING"
+                workerTask[w] = t
+
+# Action 2a: TryLockSuccess(w)
+atomic action TryLockSuccess:
+    any w in WORKERS:
+        if workerAlive[w] and workerState[w] == "SCANNING":
+            t = workerTask[w]
+            if lockState[t]["worker"] == "NONE" and taskStatus[t] == "INIT":
+                lockState[t] = {"worker": w, "version": lockVersion}
+                lockVersion = lockVersion + 1
+                workerState[w] = "EXECUTING"
+
+# Action 2b: TryLockFail(w)
+atomic action TryLockFail:
+    any w in WORKERS:
+        if workerAlive[w] and workerState[w] == "SCANNING":
+            t = workerTask[w]
+            # Back off if lock is held by another worker OR task is no longer INIT
+            locked = lockState[t]["worker"] != "NONE" and lockState[t]["worker"] != w
+            notInit = taskStatus[t] != "INIT"
+            if locked or notInit:
+                workerState[w] = "IDLE"
+                workerTask[w] = "NONE"
+
+# Action 3: ExecuteTask(w)
+atomic action ExecuteTask:
+    any w in WORKERS:
+        if workerAlive[w] and workerState[w] == "EXECUTING":
+            t = workerTask[w]
+            outcome = any ["success", "failure"]
+            if outcome == "success":
+                if taskStatus[t] == "INIT":
+                    taskStatus[t] = "COMMITTED"
+            else:
+                taskFailCount[t] = taskFailCount[t] + 1
+                if taskFailCount[t] >= MAX_FAILURES:
+                    taskStatus[t] = "DLQ"
+            workerState[w] = "UNLOCKING"
+
+# Action 4: UnlockTask(w)
+atomic action UnlockTask:
+    any w in WORKERS:
+        if workerAlive[w] and workerState[w] == "UNLOCKING":
+            t = workerTask[w]
+            if lockState[t]["worker"] == w and w != "NONE":
+                lockState[t] = {"worker": "NONE", "version": 0}
+            workerState[w] = "IDLE"
+            workerTask[w] = "NONE"
+
+# Action 5: WorkerCrash(w)
+atomic action WorkerCrash:
+    any w in WORKERS:
+        if workerAlive[w]:
+            workerAlive[w] = False
+
+# Action 6: SessionExpiry(w)
+atomic action SessionExpiry:
+    any w in WORKERS:
+        if not workerAlive[w]:
+            hasLock = False
+            for t in TASKS:
+                if lockState[t]["worker"] == w and w != "NONE":
+                    hasLock = True
+            if hasLock:
+                for t in TASKS:
+                    if lockState[t]["worker"] == w and w != "NONE":
+                        lockState[t] = {"worker": "NONE", "version": 0}
+                workerState[w] = "IDLE"
+                workerTask[w] = "NONE"
+
+# Action 7: WorkerRecover(w)
+# Guard: all ephemeral locks held by w must have expired first.
+# In the real system, a restarting process gets a new session; the old
+# session's ephemeral records are cleaned up by the coordination store.
+atomic action WorkerRecover:
+    any w in WORKERS:
+        if not workerAlive[w]:
+            # Session must have expired first (no stale locks)
+            hasLock = False
+            for t in TASKS:
+                if lockState[t]["worker"] == w:
+                    hasLock = True
+            if not hasLock:
+                workerAlive[w] = True
+                workerState[w] = "IDLE"
+                workerTask[w] = "NONE"
+
+# ============================================================
+# Safety Properties (Invariants)
+# ============================================================
+
+# S1: Mutual exclusion -- at most one worker executes a given task
+always assertion MutualExclusion:
+    for t in TASKS:
+        count = 0
+        for w in WORKERS:
+            if workerState[w] == "EXECUTING" and workerTask[w] == t:
+                count = count + 1
+        if count > 1:
+            return False
+    return True
+
+# S2: A COMMITTED task is never being executed
+always assertion NoDoubleExecution:
+    for t in TASKS:
+        if taskStatus[t] == "COMMITTED":
+            for w in WORKERS:
+                if workerState[w] == "EXECUTING" and workerTask[w] == t:
+                    return False
+    return True
+
+# S3: DLQ only after max failures
+always assertion DLQOnlyAfterMaxFailures:
+    for t in TASKS:
+        if taskStatus[t] == "DLQ":
+            if taskFailCount[t] < MAX_FAILURES:
+                return False
+    return True
+
+# S4: Lock consistency -- if lock held by alive worker, worker has that task
+always assertion LockConsistency:
+    for t in TASKS:
+        for w in WORKERS:
+            if lockState[t]["worker"] == w and w != "NONE" and workerAlive[w]:
+                if workerTask[w] != t:
+                    return False
+    return True
+
+# S5: No OTHER alive worker executes a task locked by a dead worker
+# The dead worker itself may still be in EXECUTING state until SessionExpiry
+# cleans it up; we exclude it from the check (w2 != w).
+always assertion NoOrphanExecution:
+    for t in TASKS:
+        for w in WORKERS:
+            if lockState[t]["worker"] == w and w != "NONE" and not workerAlive[w]:
+                for w2 in WORKERS:
+                    if w2 != w and workerState[w2] == "EXECUTING" and workerTask[w2] == t:
+                        return False
+    return True
+
+# ============================================================
+# Liveness Properties
+# ============================================================
+# NOTE: Liveness properties (L1-L3) require fair scheduling which
+# cannot combine with atomic actions in fizzbee v0.4.0.
+# Liveness is verified in the TLA+ model with weak/strong fairness.
+# The fizzbee model verifies safety properties only.

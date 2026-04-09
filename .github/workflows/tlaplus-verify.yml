@@ -1,0 +1,154 @@
+name: TLA+ Model Verification
+
+on:
+  push:
+    paths:
+      - 'tlaplus/**'
+  pull_request:
+    paths:
+      - 'tlaplus/**'
+  schedule:
+    - cron: '0 6 * * *'  # Daily at 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  tlc-model-check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Protocol 1: LeaderlessLog (all properties expected PASS)
+          - module: LeaderlessLog
+            config: LeaderlessLog.cfg
+            tla_file: LeaderlessLog.tla
+            expected_l3_fail: false
+          - module: LeaderlessLog-medium
+            config: LeaderlessLog-medium.cfg
+            tla_file: LeaderlessLog.tla
+            expected_l3_fail: false
+
+          # Protocol 2: TaskClaiming (all properties expected PASS)
+          - module: TaskClaiming
+            config: TaskClaiming.cfg
+            tla_file: TaskClaiming.tla
+            expected_l3_fail: false
+          - module: TaskClaiming-medium
+            config: TaskClaiming-medium.cfg
+            tla_file: TaskClaiming.tla
+            expected_l3_fail: false
+
+    name: TLC — ${{ matrix.module }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cache tla2tools.jar
+        id: cache-tla2tools
+        uses: actions/cache@v4
+        with:
+          path: tla2tools.jar
+          key: tla2tools-v1.8.0
+
+      - name: Download tla2tools.jar
+        if: steps.cache-tla2tools.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o tla2tools.jar \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
+
+      - name: Run TLC model checker
+        id: tlc
+        working-directory: tlaplus
+        env:
+          TLC_CONFIG: ${{ matrix.config }}
+          TLC_TLA_FILE: ${{ matrix.tla_file }}
+        run: |
+          java -Xmx4g -jar ../tla2tools.jar \
+            -workers auto \
+            -coverage 1 \
+            -config "$TLC_CONFIG" \
+            "$TLC_TLA_FILE" 2>&1 | tee ../tlc-output.txt
+
+      - name: Validate all properties pass
+        env:
+          TLC_OUTCOME: ${{ steps.tlc.outcome }}
+          TLC_MODULE: ${{ matrix.module }}
+        run: |
+          if [ "$TLC_OUTCOME" != "success" ]; then
+            echo "ERROR: TLC failed unexpectedly for $TLC_MODULE"
+            cat tlc-output.txt
+            exit 1
+          fi
+          echo "All properties passed as expected"
+
+      - name: Upload TLC output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tlc-output-${{ matrix.module }}
+          path: tlc-output.txt
+          retention-days: 30
+
+  tlc-simulation:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: LeaderlessLog-medium-sim
+            config: LeaderlessLog-medium.cfg
+            tla_file: LeaderlessLog.tla
+          - module: TaskClaiming-medium-sim
+            config: TaskClaiming-medium.cfg
+            tla_file: TaskClaiming.tla
+
+    name: TLC Simulation — ${{ matrix.module }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cache tla2tools.jar
+        id: cache-tla2tools
+        uses: actions/cache@v4
+        with:
+          path: tla2tools.jar
+          key: tla2tools-v1.8.0
+
+      - name: Download tla2tools.jar
+        if: steps.cache-tla2tools.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o tla2tools.jar \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
+
+      - name: Run TLC simulation
+        working-directory: tlaplus
+        env:
+          TLC_CONFIG: ${{ matrix.config }}
+          TLC_TLA_FILE: ${{ matrix.tla_file }}
+        run: |
+          java -Xmx4g -jar ../tla2tools.jar \
+            -simulate num=10000 \
+            -workers auto \
+            -config "$TLC_CONFIG" \
+            "$TLC_TLA_FILE" 2>&1 | tee ../tlc-sim-output.txt
+
+      - name: Upload simulation output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tlc-sim-output-${{ matrix.module }}
+          path: tlc-sim-output.txt
+          retention-days: 30

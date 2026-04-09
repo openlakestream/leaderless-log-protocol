@@ -1,0 +1,99 @@
+name: Claude Review — TLA+
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - '**.md'
+      - 'tlaplus/**'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+  id-token: write
+
+jobs:
+  tlaplus-syntax-review:
+    runs-on: ubuntu-latest
+    name: TLA+ Syntax & Properties Agent
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: TLA+ Syntax & Properties Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--model claude-opus-4-6"
+          settings: |
+            {
+              "permissions": {
+                "allow": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Agent"]
+              }
+            }
+          prompt: |
+            Read CLAUDE.md at the repo root for project context.
+
+            You are reviewing TLA+ model changes in this PR. Focus on:
+
+            1. **TLA+ syntax correctness**: Validate operator definitions, UNCHANGED lists are complete and correct,
+               no missing/extra variables in UNCHANGED, proper use of primed variables
+            2. **Property definitions**: Verify safety invariants and liveness temporal formulas are well-formed,
+               use correct TLA+ temporal operators (~>, [], <>)
+            3. **Config files (.cfg)**: Verify SPECIFICATION, CONSTANTS, INVARIANTS, and PROPERTIES match the
+               .tla file — no typos in property names, all declared constants have values
+            4. **Model parameters**: Check that CompactRangeStart/End, MaxOffset, MaxBatch values are consistent
+               with ASSUME statements in the .tla file
+            5. **MODULE name**: Verify the MODULE name on line 1 matches the filename (TLA+ requirement)
+            If you find issues, post them as PR review comments on the relevant lines.
+            If you find critical issues (wrong UNCHANGED list, incorrect temporal formula),
+            file a GitHub issue in lakestream-io/leaderless-log-protocol with labels "bug" and "formal-verification".
+
+          claude_env: |
+            SNBOT_GITHUB_TOKEN=${{ secrets.SNBOT_GITHUB_TOKEN }}
+
+  tlaplus-spec-alignment-review:
+    runs-on: ubuntu-latest
+    name: TLA+ Spec Alignment Agent
+    needs: tlaplus-syntax-review
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: TLA+ Spec Alignment Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--model claude-opus-4-6"
+          settings: |
+            {
+              "permissions": {
+                "allow": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Agent"]
+              }
+            }
+
+          prompt: |
+            Read CLAUDE.md at the repo root for project context.
+
+            You are verifying that TLA+ models align with the canonical spec documents. For each
+            TLA+ file changed in this PR:
+
+            1. **Read the corresponding spec**: LeaderlessLog*.tla maps to 1-leaderless-log-protocol.md,
+               TaskClaiming.tla maps to 2-coordination-delegated-task-claiming.md
+            2. **Variables**: Every state variable in spec Section 3 must have a corresponding TLA+ VARIABLE
+            3. **Actions**: Every action in spec Section 4 must have a corresponding TLA+ operator
+            4. **Properties**: Every property in spec Section 5 must appear as an INVARIANT or PROPERTY
+            5. **Fairness**: Verify fairness conditions match spec Section 6 requirements
+            6. **Constants**: Verify model constants match spec Section 3 constant definitions
+
+            Cross-reference the spec-to-TLA+ mapping table in README.md to verify completeness.
+
+            If you find missing or misaligned constructs, post PR review comments explaining
+            what is missing and referencing the specific spec section.
+            File issues in lakestream-io/leaderless-log-protocol for any spec drift with labels "spec-drift"
+            and "formal-verification".
+
+          claude_env: |
+            SNBOT_GITHUB_TOKEN=${{ secrets.SNBOT_GITHUB_TOKEN }}

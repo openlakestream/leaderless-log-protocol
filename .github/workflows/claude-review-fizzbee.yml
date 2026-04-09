@@ -1,0 +1,96 @@
+name: Claude Review — Fizzbee
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - '**.md'
+      - 'fizzbee/**'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+  id-token: write
+
+jobs:
+  fizzbee-syntax-review:
+    runs-on: ubuntu-latest
+    name: Fizzbee Syntax & Properties Agent
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fizzbee Syntax & Properties Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--model claude-opus-4-6"
+          settings: |
+            {
+              "permissions": {
+                "allow": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Agent"]
+              }
+            }
+          prompt: |
+            Read CLAUDE.md at the repo root for project context.
+
+            You are reviewing Fizzbee model changes in this PR. Focus on:
+
+            1. **Fizzbee syntax**: Validate action definitions use correct keywords (action, any, either/or,
+               atomic, if/else), proper indentation, correct use of range() bounds
+            2. **Assertions**: Verify safety assertions use "always assertion" and liveness uses
+               "always eventually assertion" with correct syntax
+            3. **State variable initialization**: Check all state maps are properly initialized in
+               the init block with correct types
+            4. **Helper functions**: Verify func definitions return correct types and handle edge cases
+            If you find issues, post them as PR review comments on the relevant lines.
+            If you find critical issues, file a GitHub issue in lakestream-io/leaderless-log-protocol
+            with labels "bug" and "formal-verification".
+
+          claude_env: |
+            SNBOT_GITHUB_TOKEN=${{ secrets.SNBOT_GITHUB_TOKEN }}
+
+  fizzbee-spec-alignment-review:
+    runs-on: ubuntu-latest
+    name: Fizzbee Spec Alignment Agent
+    needs: fizzbee-syntax-review
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fizzbee Spec Alignment Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--model claude-opus-4-6"
+          settings: |
+            {
+              "permissions": {
+                "allow": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Agent"]
+              }
+            }
+
+          prompt: |
+            Read CLAUDE.md at the repo root for project context.
+
+            You are verifying that Fizzbee models align with the canonical spec documents. For each
+            .fizz file changed in this PR:
+
+            1. **Read the corresponding spec**: LeaderlessLog*.fizz maps to 1-leaderless-log-protocol.md,
+               TaskClaiming.fizz maps to 2-coordination-delegated-task-claiming.md
+            2. **Variables**: Every state variable in spec Section 3 must have a corresponding Fizzbee variable
+            3. **Actions**: Every action in spec Section 4 must have a corresponding Fizzbee action
+            4. **Properties**: Every property in spec Section 5 must appear as an assertion
+            5. **Constants**: Verify model constants match spec Section 3 constant definitions
+
+            Cross-reference the spec-to-Fizzbee mapping table in README.md to verify completeness.
+
+            If you find missing or misaligned constructs, post PR review comments explaining
+            what is missing and referencing the specific spec section.
+            File issues in lakestream-io/leaderless-log-protocol for any spec drift with labels "spec-drift"
+            and "formal-verification".
+
+          claude_env: |
+            SNBOT_GITHUB_TOKEN=${{ secrets.SNBOT_GITHUB_TOKEN }}

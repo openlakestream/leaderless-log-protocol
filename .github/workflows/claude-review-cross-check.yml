@@ -1,0 +1,104 @@
+name: Claude Review — Cross-Check
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'tlaplus/**'
+      - 'fizzbee/**'
+      - '*.md'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+  id-token: write
+
+jobs:
+  tlaplus-vs-fizzbee-review:
+    runs-on: ubuntu-latest
+    name: TLA+ vs Fizzbee Alignment Agent
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: TLA+ vs Fizzbee Alignment Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--model claude-opus-4-6"
+          settings: |
+            {
+              "permissions": {
+                "allow": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Agent"]
+              }
+            }
+          prompt: |
+            Read CLAUDE.md at the repo root for project context.
+
+            You are verifying cross-model consistency between TLA+ and Fizzbee implementations.
+            For each protocol with changes in this PR:
+
+            1. **State variables**: Both TLA+ and Fizzbee must define the same set of state variables
+               with equivalent types and initial values
+            2. **Actions**: Every action in TLA+ must have a corresponding action in Fizzbee with
+               the same guards and effects
+            3. **Properties**: Both must check the same safety invariants and liveness properties
+            4. **Expected verdicts**: Both must produce the same pass/fail results:
+               - LeaderlessLog: ALL PASS
+               - TaskClaiming: ALL PASS
+
+            Cross-reference the mapping tables in README.md.
+
+            If you find disagreements between TLA+ and Fizzbee, post PR review comments and
+            file an issue in lakestream-io/leaderless-log-protocol with labels "cross-model-inconsistency"
+            and "formal-verification".
+
+          claude_env: |
+            SNBOT_GITHUB_TOKEN=${{ secrets.SNBOT_GITHUB_TOKEN }}
+
+  models-vs-spec-review:
+    runs-on: ubuntu-latest
+    name: Models vs Spec Agent
+    needs: tlaplus-vs-fizzbee-review
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Models vs Spec Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--model claude-opus-4-6"
+          settings: |
+            {
+              "permissions": {
+                "allow": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Agent"]
+              }
+            }
+
+          prompt: |
+            Read CLAUDE.md at the repo root for project context.
+
+            You are verifying that BOTH TLA+ AND Fizzbee models fully cover the canonical spec documents.
+            For each protocol:
+
+            1. **Read the spec**: 1-leaderless-log-protocol.md or 2-coordination-delegated-task-claiming.md
+            2. **Section 3 (State Space)**: Every variable defined in the spec must appear in BOTH
+               TLA+ and Fizzbee
+            3. **Section 4 (Actions)**: Every action defined in the spec must be implemented in BOTH
+               TLA+ and Fizzbee
+            4. **Section 5 (Properties)**: Every safety and liveness property must be checked in BOTH
+               TLA+ and Fizzbee
+            5. **Helpers**: Verify helper functions (HasCoveringEntry, CoveringEntryOffset, etc.) are
+               consistent between spec description and both model implementations
+
+            If a spec section has no corresponding model construct in either TLA+ or Fizzbee,
+            file an issue in lakestream-io/leaderless-log-protocol with labels "spec-coverage-gap" and
+            "formal-verification".
+
+
+          claude_env: |
+            SNBOT_GITHUB_TOKEN=${{ secrets.SNBOT_GITHUB_TOKEN }}
+
