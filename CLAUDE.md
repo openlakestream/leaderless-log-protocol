@@ -124,7 +124,7 @@ make check     # Alias for verify
 | SequenceCounterPositive | Safety | PASS | — | TLA+ only (MonotonicOffsets in Fizzbee) |
 | NoOffsetDuplicates | Safety | — | PASS | Fizzbee only |
 | MonotonicOffsets | Safety | — | PASS | Fizzbee only |
-| FencedRejectsAppends | Safety | PASS | — | See note ¹ |
+| FencedRejectsAppends | Safety | PASS | — | Uses ENABLED; see note ¹ |
 | CompactionPreservesData | Safety | PASS | PASS | |
 | NoPhantomEntries | Safety | PASS | PASS | |
 | CursorConsistency | Safety | PASS | PASS | |
@@ -135,7 +135,7 @@ make check     # Alias for verify
 | CompactionCompletes | Liveness | PASS | — | Requires fairness (TLA+ only) |
 | ReaderEventuallySucceeds | Liveness (vacuous) | PASS | — | Requires fairness (TLA+ only) |
 
-¹ FencedRejectsAppends: The spec says "AssignOffset is not enabled when fenced", which is guaranteed by action guards. As a state invariant, it can be transiently violated when FenceLog fires while a writer is in ASSIGNING_OFFSET. Omitted from Fizzbee; correctness is enforced by action guards.
+¹ FencedRejectsAppends: The TLA+ invariant uses `ENABLED AssignOffset(w)` to check that AssignOffset is not enabled when fenced, matching the canonical spec. A writer may be in ASSIGNING_OFFSET when fenced (entered before the fence), but AssignOffset cannot fire — AssignOffsetFenced handles that case. Omitted from Fizzbee (no ENABLED operator); correctness is enforced by action guards.
 
 ³ NoOverlappingRanges: Checks WAL-WAL overlap only. WAL-COMPACTED overlap is intentionally allowed during compaction's write-before-delete (COMPACTED entry is written before old WAL entries are deleted). After CompactorCrash during DELETING_OLD, the overlap may persist permanently, which is harmless for readers.
 
@@ -147,9 +147,9 @@ make check     # Alias for verify
 | NoDoubleExecution | Safety | PASS | PASS | |
 | DLQOnlyAfterMaxFailures | Safety | PASS | PASS | |
 | LockConsistency | Safety | PASS | PASS | |
-| NoOrphanExecution | Safety | PASS | PASS | See note ² |
+| NoOrphanExecution | Safety | PASS | PASS | Excludes dead worker (w' ≠ w); see note ² |
 | TaskCompletion | Liveness | PASS | — | Requires fairness (TLA+ only) |
 | CrashRecovery | Liveness | PASS | — | Requires fairness (TLA+ only) |
 | NoStarvation | Liveness | PASS | — | Requires fairness (TLA+ only) |
 
-² NoOrphanExecution: Fizzbee version excludes the dead worker itself from the check (w2 ≠ w), since the dead worker's state is not cleaned up until SessionExpiry.
+² NoOrphanExecution: Both TLA+ and Fizzbee exclude the dead worker itself from the check (w' ≠ w), since the dead worker's `EXECUTING` state is residual until `SessionExpiry` cleans it up.

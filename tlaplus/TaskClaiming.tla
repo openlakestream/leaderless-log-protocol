@@ -85,6 +85,7 @@ TryLockSuccess(w) ==
     /\ LET t == workerTask[w]
        IN
        /\ ~IsLocked(t)
+       /\ taskStatus[t] = "INIT"
        /\ lockState' = [lockState EXCEPT ![t] =
               [worker |-> w, version |-> lockVersion]]
        /\ lockVersion' = lockVersion + 1
@@ -92,16 +93,16 @@ TryLockSuccess(w) ==
     /\ UNCHANGED <<taskStatus, workerAlive, workerTask, taskFailCount>>
 
 (***************************************************************************)
-(* Action 2: TryLockTask(w) — failure                                     *)
-(* Lock already held by another worker. Worker backs off.                  *)
+(* Action 2b: TryLockTask(w) — failure                                    *)
+(* Lock held by another worker OR task no longer INIT. Worker backs off.   *)
 (***************************************************************************)
 TryLockFail(w) ==
     /\ workerAlive[w] = TRUE
     /\ workerState[w] = "SCANNING"
     /\ LET t == workerTask[w]
        IN
-       /\ IsLocked(t)
-       /\ ~IsLockedBy(t, w)
+       \/ (IsLocked(t) /\ ~IsLockedBy(t, w))
+       \/ taskStatus[t] # "INIT"
     /\ workerState' = [workerState EXCEPT ![w] = "IDLE"]
     /\ workerTask' = [workerTask EXCEPT ![w] = "NONE"]
     /\ UNCHANGED <<taskStatus, lockState, workerAlive, taskFailCount, lockVersion>>
@@ -212,18 +213,16 @@ Next ==
 (* Fairness                                                                *)
 (***************************************************************************)
 Fairness ==
-    /\ \A w \in Workers, t \in Tasks : WF_vars(ScanTasks(w, t))
-    \* SF for TryLockSuccess: if the lock becomes free infinitely often,
-    \* w eventually acquires it. WF is insufficient because competing
-    \* workers can repeatedly disable the action between steps.
+    \* SF for forward-progress actions: crash/recover cycles (WorkerCrash
+    \* has no fairness) toggle enablement. WF requires continuous enablement
+    \* and is vacuously satisfied by infinite crash loops. SF requires only
+    \* infinitely-often enablement: if a worker is alive periodically, it
+    \* eventually makes progress along the scan→lock→execute→unlock path.
+    /\ \A w \in Workers, t \in Tasks : SF_vars(ScanTasks(w, t))
     /\ \A w \in Workers : SF_vars(TryLockSuccess(w))
     /\ \A w \in Workers : WF_vars(TryLockFail(w))
-    \* SF for ExecuteTaskSuccess: if enabled infinitely often, it eventually
-    \* fires. WF is insufficient because crash-recover cycles can repeatedly
-    \* disable it (crash disables, recover re-enables) — WF is satisfied
-    \* vacuously, allowing infinite crash loops without progress.
     /\ \A w \in Workers : SF_vars(ExecuteTaskSuccess(w))
-    /\ \A w \in Workers : WF_vars(ExecuteTaskFailure(w))
+    /\ \A w \in Workers : SF_vars(ExecuteTaskFailure(w))
     /\ \A w \in Workers : WF_vars(UnlockTask(w))
     /\ \A w \in Workers : WF_vars(SessionExpiry(w))
     /\ \A w \in Workers : WF_vars(WorkerRecover(w))
@@ -258,12 +257,14 @@ LockConsistency ==
         (IsLockedBy(t, w) /\ workerAlive[w]) =>
             workerTask[w] = t
 
-\* S5: No alive worker executes a task locked by a dead worker
+\* S5: No OTHER alive worker executes a task locked by a dead worker.
+\* The dead worker itself may still be in EXECUTING state until SessionExpiry
+\* cleans it up; we exclude it from the check (w2 ≠ w), matching Fizzbee.
 NoOrphanExecution ==
     \A t \in Tasks, w \in Workers :
         (IsLockedBy(t, w) /\ ~workerAlive[w]) =>
             ~\E w2 \in Workers :
-                workerState[w2] = "EXECUTING" /\ workerTask[w2] = t
+                w2 # w /\ workerState[w2] = "EXECUTING" /\ workerTask[w2] = t
 
 (***************************************************************************)
 (* Liveness Properties                                                     *)
@@ -299,9 +300,19 @@ TypeOK ==
     /\ \A w \in Workers : workerState[w] \in WorkerStates
     /\ \A w \in Workers : workerTask[w] \in Tasks \cup {"NONE"}
     /\ \A t \in Tasks : taskFailCount[t] \in 0..MaxFailures
-    \* Bounded for TLC — Nat is infinite but reachable values are finite.
-    \* Upper bound: each TryLockSuccess increments once; at most
-    \* |Workers| * |Tasks| * (MaxFailures+1) lock acquisitions are reachable.
-    /\ lockVersion \in 1..(1 + Cardinality(Workers) * Cardinality(Tasks) * (MaxFailures + 2))
+    \* lockVersion is a monotonically increasing counter with no finite upper
+    \* bound — crash/recover cycles create unbounded lock acquisitions.
+    \* Bounded externally via CONSTRAINT in the TLC config file.
+    /\ lockVersion >= 1
+
+(***************************************************************************)
+(* State constraint for TLC: bounds the unbounded lockVersion counter.     *)
+(* lockVersion grows without bound due to crash/recover lock cycles.       *)
+(* This is NOT a correctness property — it merely keeps TLC's state space  *)
+(* finite. The value must be large enough to exercise the interesting      *)
+(* behaviors (lock contention, crash recovery, DLQ).                       *)
+(***************************************************************************)
+CONSTANTS MaxLockVersion
+LockVersionBound == lockVersion <= MaxLockVersion
 
 =============================================================================

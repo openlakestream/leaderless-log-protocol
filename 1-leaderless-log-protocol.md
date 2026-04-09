@@ -265,9 +265,9 @@ The model captures this with `[type |-> EntryType, msgCount |-> Nat]` records an
 |--------|----------|-----------|
 | `StartAppend(w)` | Weak fairness | Writers continuously attempt writes |
 | `WALWrite(w)` | Weak fairness | WAL storage is reliable |
-| `AssignOffset(w)` | Weak fairness | Coordination store is reliable |
-| `AssignOffsetFenced(w)` | Weak fairness | Failure path must complete for L1 |
-| `AssignOffsetExhausted(w)` | Weak fairness | Failure path completes (modeling artifact) |
+| `AssignOffset(w)` | Strong fairness | Coordination store call is atomic; writer completes during any finite OPEN window even if FenceLog/UnfenceLog oscillate |
+| `AssignOffsetFenced(w)` | Strong fairness | Same as AssignOffset — fence/unfence oscillation toggles enablement; SF ensures the failure path completes |
+| `AssignOffsetExhausted(w)` | Strong fairness | Same as AssignOffset — enablement may toggle; SF ensures the failure path completes |
 | `AppendComplete(w)` | Weak fairness | Completion always runs |
 | `CompactStart` | Weak fairness | Compaction is periodically triggered |
 | `CompactWriteCompactedIndex` | Weak fairness | Each compaction step completes |

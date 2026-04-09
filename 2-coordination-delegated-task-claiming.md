@@ -74,21 +74,21 @@ ConditionalDelete(key, {IfVersionEquals(v)}) → OK | VersionMismatch
 *Worker scans for available tasks and picks one to process.*
 
 #### Action 2: `TryLockTask(w)` — Success
-**Guard:** `workerAlive[w] = TRUE ∧ workerState[w] = SCANNING ∧ lockState[workerTask[w]] = UNLOCKED`
+**Guard:** `workerAlive[w] = TRUE ∧ workerState[w] = SCANNING ∧ lockState[workerTask[w]] = UNLOCKED ∧ taskStatus[workerTask[w]] = INIT`
 **Effect:** Let `t = workerTask[w]`:
 - `lockState[t] := LOCKED(w, lockVersion)`
 - `lockVersion := lockVersion + 1`
 - `workerState[w] := EXECUTING`
 
-*Lock acquisition uses `ConditionalCreate` with ephemeral record semantics on the coordination store.*
+*Lock acquisition uses `ConditionalCreate` with ephemeral record semantics on the coordination store. The task status is re-checked to prevent locking a task that was completed between scan and lock.*
 
 #### Action 2b: `TryLockTask(w)` — Failure
-**Guard:** `workerAlive[w] = TRUE ∧ workerState[w] = SCANNING ∧ lockState[workerTask[w]] = LOCKED(w', v) for some w' ≠ w`
+**Guard:** `workerAlive[w] = TRUE ∧ workerState[w] = SCANNING ∧ (lockState[workerTask[w]] = LOCKED(w', v) for some w' ≠ w  ∨  taskStatus[workerTask[w]] ≠ INIT)`
 **Effect:**
 - `workerState[w] := IDLE`
 - `workerTask[w] := NONE`
 
-*Lock already held by another worker. `AlreadyExists` error causes the worker to back off.*
+*Lock held by another worker, or task no longer INIT (completed or DLQ'd between scan and lock attempt). Worker backs off.*
 
 #### Action 3: `ExecuteTask(w)` — Success
 **Guard:** `workerAlive[w] = TRUE ∧ workerState[w] = EXECUTING ∧ taskStatus[workerTask[w]] = INIT`
@@ -174,8 +174,8 @@ ConditionalDelete(key, {IfVersionEquals(v)}) → OK | VersionMismatch
 
 #### S5: `NoOrphanExecution`
 **Type:** Invariant (conditional)
-**Statement:** A lock held by a dead worker has no alive worker executing that task.
-**Formal:** `∀ t ∈ Tasks, w ∈ Workers: lockState[t] = LOCKED(w, v) ∧ ¬workerAlive[w] ⟹ ¬∃ w' ∈ Workers: workerState[w'] = EXECUTING ∧ workerTask[w'] = t`
+**Statement:** A lock held by a dead worker has no other worker executing that task. The dead worker's own `EXECUTING` state is residual — it persists until `SessionExpiry` cleans it up.
+**Formal:** `∀ t ∈ Tasks, w ∈ Workers: lockState[t] = LOCKED(w, v) ∧ ¬workerAlive[w] ⟹ ¬∃ w' ∈ Workers: w' ≠ w ∧ workerState[w'] = EXECUTING ∧ workerTask[w'] = t`
 **Expected Verdict:** PASS
 
 ### Liveness Properties
@@ -202,10 +202,12 @@ ConditionalDelete(key, {IfVersionEquals(v)}) → OK | VersionMismatch
 
 | Action | Fairness | Rationale |
 |--------|----------|-----------|
-| `ScanTasks(w, t)` | Weak fairness | Workers continuously poll for tasks |
-| `TryLockTask(w)` | Weak fairness | Lock attempt always completes (coordination store is reliable) |
-| `ExecuteTask(w)` | Weak fairness | Task execution always terminates (success or failure) |
-| `UnlockTask(w)` | Weak fairness | Unlock is in finally block, always runs |
+| `ScanTasks(w, t)` | Strong fairness | Crash/recover cycles (WorkerCrash has no fairness) toggle enablement; SF ensures workers poll when alive periodically |
+| `TryLockTask(w)` — Success | Strong fairness | Lock contention and crash/recover cycles toggle enablement; SF ensures eventual acquisition |
+| `TryLockTask(w)` — Failure | Weak fairness | After crash+recover, worker returns to IDLE (not SCANNING); no lasso keeps it stuck |
+| `ExecuteTask(w)` — Success | Strong fairness | Crash/recover cycles toggle enablement; SF ensures eventual task execution |
+| `ExecuteTask(w)` — Failure | Strong fairness | Same as success — crash/recover cycles toggle enablement |
+| `UnlockTask(w)` | Weak fairness | Worker is alive and in UNLOCKING — no external event toggles enablement |
 | `WorkerCrash(w)` | None | Crashes are not guaranteed to happen |
 | `SessionExpiry(w)` | Weak fairness | Coordination store sessions have bounded timeout; expiry is guaranteed for dead workers |
 | `WorkerRecover(w)` | Weak fairness | We assume crashed workers eventually restart |
