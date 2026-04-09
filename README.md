@@ -262,3 +262,9 @@ After running both TLA+ and Fizzbee on both protocols:
 3. All liveness properties must **pass** in both protocols and both tools
 
 If results disagree, consult the canonical spec doc to determine which implementation has the bug.
+
+## License
+
+This project is licensed under the Apache License, Version 2.0 — see the [LICENSE](LICENSE) file for the full text.
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
