@@ -112,22 +112,6 @@ The model captures this with `[type |-> EntryType, msgCount |-> Nat]` records an
 
 *Models the coordination store's `AtomicIncrement` — the atomic offset assignment + index write. The sequence counter is incremented by `count` (the batch size), and a single index entry is written at the end offset covering offsets `[off, endOff]`.*
 
-> **Implementation note:** No coordination store provides a native primitive that atomically increments a counter AND writes a separate key. Implementations must use a two-phase pattern (e.g., a "pending entry" embedded in the counter object, materialized after the CAS succeeds) to achieve equivalent atomicity. See [`examples/s3-queue/SPEC.md`](examples/s3-queue/SPEC.md) Section 8.1 for the `AtomicIncrementWithPending` pattern.
-
-#### Action 3b: `AssignOffsetFenced(w)`
-**Guard:** `writerState[w] = ASSIGNING_OFFSET ∧ logState = FENCED`
-**Effect:**
-- `writerState[w] := FAILED`
-
-*Handles the case where the log was fenced while a writer was in `ASSIGNING_OFFSET`. The writer cannot complete the offset assignment and transitions to FAILED. A writer may enter `ASSIGNING_OFFSET` before the fence, but `AssignOffset` cannot fire — this action handles that path instead.*
-
-#### Action 3c: `AssignOffsetExhausted(w)`
-**Guard:** `writerState[w] = ASSIGNING_OFFSET ∧ logState = OPEN ∧ sequenceCounter + writerBatchSize[w] - 1 > MaxOffset`
-**Effect:**
-- `writerState[w] := FAILED`
-
-*Model-checking artifact: handles offset exhaustion when the bounded `MaxOffset` parameter is exceeded. In real systems, offsets are unbounded (e.g., 64-bit integers), so this action would never fire. Included to prevent spurious deadlock in the finite-state model.*
-
 #### Action 4: `AppendComplete(w)`
 **Guard:** `writerState[w] ∈ {DONE, FAILED}`
 **Effect:**
@@ -265,9 +249,9 @@ The model captures this with `[type |-> EntryType, msgCount |-> Nat]` records an
 
 #### L2: `CompactionCompletes`
 **Type:** Temporal (leads-to)
-**Statement:** If compaction starts, it eventually reaches DONE or returns to IDLE (if the compactor crashes).
-**Formal:** `(compactorState = WRITING_COMPACTED_INDEX) ~> (compactorState = DONE ∨ compactorState = IDLE)`
-**Expected Verdict:** PASS (under weak fairness on compactor actions). Note: `CompactorCrash` has no fairness (crashes are not guaranteed), so the compactor may crash back to IDLE at any intermediate step. The disjunction ensures the compactor does not get permanently stuck in an intermediate state.
+**Statement:** If compaction starts, it eventually reaches DONE.
+**Formal:** `(compactorState = WRITING_COMPACTED_INDEX) ~> (compactorState = DONE)`
+**Expected Verdict:** PASS (under weak fairness on compactor actions)
 
 #### L3: `ReaderEventuallySucceeds`
 **Type:** Temporal (leads-to)
