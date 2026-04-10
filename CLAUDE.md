@@ -121,9 +121,8 @@ make check     # Alias for verify
 | Property | Type | TLA+ | Fizzbee | Notes |
 |----------|------|------|---------|-------|
 | TypeOK | Invariant | PASS | — | TLA+ only |
-| SequenceCounterPositive | Safety | PASS | — | TLA+ only (MonotonicOffsets in Fizzbee) |
-| NoOffsetDuplicates | Safety | — | PASS | Fizzbee only |
-| MonotonicOffsets | Safety | — | PASS | Fizzbee only |
+| NoOffsetDuplicates | Safety | — | PASS | Fizzbee only (trivially true in TLA+ by construction) |
+| MonotonicOffsets | Safety | PASS | PASS | `sequenceCounter ≥ 1` |
 | FencedRejectsAppends | Safety | PASS | — | Uses ENABLED; see note ¹ |
 | CompactionPreservesData | Safety | PASS | PASS | |
 | NoPhantomEntries | Safety | PASS | PASS | |
