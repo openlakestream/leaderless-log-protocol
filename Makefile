@@ -31,7 +31,11 @@ FIZZBEE_TARBALL := fizzbee-$(FIZZBEE_VERSION)-$(FIZZBEE_OS)_$(FIZZBEE_ARCH).tar.
 FIZZBEE_URL := https://github.com/fizzbee-io/fizzbee/releases/download/$(FIZZBEE_VERSION)/$(FIZZBEE_TARBALL)
 FIZZ_BIN := $(FIZZ_DIR)/fizz
 
-.PHONY: fizzbee-install tlaplus-install fizzbee tlaplus verify check clean
+.PHONY: help fizzbee-install tlaplus-install fizzbee tlaplus verify check clean
+
+## help: Show this help message
+help:
+	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## //' | column -t -s ':'
 
 ## fizzbee-install: Download and install Fizzbee CLI locally
 fizzbee-install:

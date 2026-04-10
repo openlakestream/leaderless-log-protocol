@@ -1,0 +1,39 @@
+name: Spec Issue
+description: Report a correctness concern in a protocol specification
+labels: ["spec-issue", "formal-verification"]
+body:
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: Which protocol?
+      options:
+        - "Protocol 1: Leaderless Log"
+        - "Protocol 2: Task Claiming"
+        - "Layer 0: Coordination-Delegated Pattern"
+    validations:
+      required: true
+  - type: input
+    id: section
+    attributes:
+      label: Spec section
+      description: Which section of the spec document (e.g., "Section 4, Action 3")?
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the correctness concern. What behavior does the spec allow or disallow that seems wrong?
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Does this affect safety or liveness properties?
+      options:
+        - Safety (invariant violation)
+        - Liveness (progress issue)
+        - Neither (clarity / completeness)
+        - Unsure
+    validations:
+      required: true

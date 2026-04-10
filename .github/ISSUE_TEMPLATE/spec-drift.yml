@@ -1,0 +1,35 @@
+name: Spec Drift
+description: Report that an implementation or model doesn't match its spec
+labels: ["spec-drift"]
+body:
+  - type: dropdown
+    id: artifact
+    attributes:
+      label: Which artifact is drifted?
+      options:
+        - TLA+ model
+        - Fizzbee model
+        - Rust reference implementation (S3-Queue)
+    validations:
+      required: true
+  - type: input
+    id: spec-section
+    attributes:
+      label: Spec section it should match
+      description: Which spec section defines the expected behavior?
+    validations:
+      required: true
+  - type: input
+    id: file
+    attributes:
+      label: File and line
+      description: "Which file and line number (e.g., tlaplus/LeaderlessLog.tla:190)?"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What does the spec say vs. what does the code/model do?
+    validations:
+      required: true

@@ -1,3 +1,7 @@
+[![TLA+ Verification](https://github.com/lakestream-io/leaderless-log-protocol/actions/workflows/tlaplus-verify.yml/badge.svg)](https://github.com/lakestream-io/leaderless-log-protocol/actions/workflows/tlaplus-verify.yml)
+[![Fizzbee Verification](https://github.com/lakestream-io/leaderless-log-protocol/actions/workflows/fizzbee-verify.yml/badge.svg)](https://github.com/lakestream-io/leaderless-log-protocol/actions/workflows/fizzbee-verify.yml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 # Leaderless Log Protocol
 
 A formally verified distributed append-only log protocol with concurrent writers, compaction, and readers — built on the **coordination-delegated** pattern, where stateless workers offload all coordination to an external linearizable store.
@@ -116,7 +120,7 @@ The canonical **SPEC docs** (Markdown) define each protocol precisely. Both TLA+
 
 ### TLA+ (TLC Model Checker)
 
-Prerequisites: [TLA+ tools](https://github.com/tlaplus/tlaplus/releases) (tla2tools.jar)
+Prerequisites: Java 17+ and [TLA+ tools](https://github.com/tlaplus/tlaplus/releases) (tla2tools.jar). Quick setup: `make tlaplus-install`
 
 **Leaderless Log Protocol:**
 ```bash
@@ -166,31 +170,40 @@ The `MaxBatch` parameter controls multi-record entry modeling:
 
 ### Fizzbee
 
-Upload `.fizz` files to [fizzbee.io](https://fizzbee.io/) or use the local Fizzbee CLI.
-
 ```bash
-# Install Fizzbee CLI (if available)
-# Run model checker on each spec
-fizzbee check fizzbee/LeaderlessLog.fizz
-fizzbee check fizzbee/TaskClaiming.fizz
+# Install Fizzbee CLI locally (one-time setup)
+make fizzbee-install
+
+# Run Fizzbee model checker on all specs
+make fizzbee
+
+# Or run individual specs directly
+cd fizzbee && ~/.local/fizzbee/fizz LeaderlessLog.fizz
+cd fizzbee && ~/.local/fizzbee/fizz TaskClaiming.fizz
 ```
+
+You can also upload `.fizz` files to [fizzbee.io](https://fizzbee.io/) for browser-based checking.
 
 ## Expected Results
 
 ### Protocol 1: Leaderless Log
 
-| Property | Type | Expected |
-|----------|------|----------|
-| `MonotonicOffsets` | Safety | PASS |
-| `FencedRejectsAppends` | Safety | PASS |
-| `CompactionPreservesData` | Safety | PASS |
-| `NoPhantomEntries` | Safety | PASS |
-| `CursorConsistency` | Safety | PASS |
-| `AppendProgress` | Liveness | PASS |
-| `CompactionCompletes` | Liveness | PASS |
-| `ReaderNotPermanentlyStuck` | Liveness | PASS |
+| Property | Type | TLA+ | Fizzbee | Notes |
+|----------|------|------|---------|-------|
+| `TypeOK` | Invariant | PASS | — | TLA+ only |
+| `MonotonicOffsets` | Safety | PASS | PASS | `SequenceCounterPositive` in TLA+ |
+| `FencedRejectsAppends` | Safety | PASS | — | Uses ENABLED; omitted from Fizzbee |
+| `CompactionPreservesData` | Safety | PASS | PASS | |
+| `NoPhantomEntries` | Safety | PASS | PASS | |
+| `CursorConsistency` | Safety | PASS | PASS | |
+| `NoOverlappingRanges` | Safety | PASS | PASS | WAL-WAL only; WAL-COMPACTED overlap allowed |
+| `NoReaderError` | Safety | PASS | PASS | |
+| `SequentialCompactionSafety` | Safety | PASS | PASS | Compositionality: round 2 preserves round 1 |
+| `AppendProgress` | Liveness | PASS | — | Requires fairness (TLA+ only) |
+| `CompactionCompletes` | Liveness | PASS | — | Requires fairness (TLA+ only) |
+| `ReaderEventuallySucceeds` | Liveness | PASS | — | Vacuously true; retained as regression guard |
 
-All properties pass. The `ReadEntry` action correctly models that both WAL and COMPACTED entries are readable — compaction reorganizes data into PARQUET files but does not delete it. The ML layer dispatches on `position.fileType()` to route reads to the appropriate storage backend.
+All properties pass. The `ReadEntry` action correctly models that both WAL and COMPACTED entries are readable — compaction reorganizes data into compacted files but does not delete it. A reader implementation dispatches on entry file type to route reads to the appropriate storage backend.
 
 ### Protocol 2: Task Claiming
 
@@ -232,7 +245,10 @@ All properties should pass for Protocol 2.
 | Safety S2 | `MonotonicOffsets` | `always assertion MonotonicOffsets` |
 | Safety S3 | `FencedRejectsAppends` | `always assertion FencedRejectsAppends` |
 | Safety S4 | `CompactionPreservesData` | `always assertion CompactionPreservesData` |
-| Liveness L3 | `ReaderNotPermanentlyStuck` | `always eventually assertion ReaderNotPermanentlyStuck` |
+| Safety S7 | `NoOverlappingRanges` | `always assertion NoOverlappingRanges` |
+| Safety S8 | `NoReaderError` | `always assertion NoReaderError` |
+| Safety S9 | `SequentialCompactionSafety` | `always assertion SequentialCompactionSafety` |
+| Liveness L3 | `ReaderEventuallySucceeds` | — (liveness requires fairness; TLA+ only) |
 
 ### Protocol 2: Task Claiming
 

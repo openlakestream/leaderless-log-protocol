@@ -49,15 +49,42 @@ pub async fn consume(
         None => return Ok(None),
     };
 
-    // Compute position within batch
+    // Read the data object, retrying from CeilingGet if compaction deleted
+    // the WAL data between index read and data fetch (Race 2, SPEC §11.5).
+    let (data, entry, entry_offset) = {
+        let mut current_entry = entry;
+        let mut current_entry_offset = entry_offset;
+        let mut data_result = None;
+
+        for _data_retry in 0..config.ceiling_get_max_retries {
+            match client.get(&current_entry.data_key).await? {
+                Some((d, _)) => {
+                    data_result = Some(d);
+                    break;
+                }
+                None => {
+                    // Data object deleted by compaction; re-read from CeilingGet
+                    // to find the COMPACTED entry that replaced it.
+                    match ceiling_get(client, topic, cursor.offset, config).await? {
+                        Some((new_offset, new_entry)) => {
+                            current_entry = new_entry;
+                            current_entry_offset = new_offset;
+                        }
+                        None => return Ok(None),
+                    }
+                }
+            }
+        }
+
+        match data_result {
+            Some(d) => (d, current_entry, current_entry_offset),
+            None => return Err(S3QueueError::OffsetNotFound),
+        }
+    };
+
+    // Recompute position within batch after potential retry
     let start_offset = entry_offset - entry.msg_count + 1;
     let position_in_batch = (cursor.offset - start_offset) as usize;
-
-    // Read the data object
-    let (data, _) = client
-        .get(&entry.data_key)
-        .await?
-        .ok_or(S3QueueError::OffsetNotFound)?;
 
     let message = if entry.msg_count == 1 {
         serde_json::from_slice(&data)
